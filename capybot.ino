@@ -60,6 +60,9 @@ bool touchOK = false;
 uint16_t C_BG, C_HEART, C_DOT;
 uint16_t C_POOP, C_POOP_SH, C_PWHITE, C_PDARK;
 
+#define FLASH_N 6
+uint16_t FLASH[FLASH_N];   // drumroll colors cycled behind Carl while he thinks
+
 uint16_t *sprBuf[SP_COUNT];   // decoded sprites in PSRAM
 uint16_t *rotBuf = nullptr;   // 480x480 scratch for the spin rotozoom
 
@@ -118,6 +121,28 @@ void blitCentered(int s, int dx, int dy) {
   const SpriteDef &d = CARL_SPRITES[s];
   gfx->fillScreen(C_BG);
   gfx->draw16bitRGBBitmap((480 - d.w) / 2 + dx, (480 - d.h) / 2 + dy, sprBuf[s], d.w, d.h);
+}
+
+// Blit a sprite centered over a solid `bg` color, keying out the sprite's own
+// baked background (pixels == C_BG) so `bg` shows through behind Carl. Composed
+// in rotBuf then blitted in one pass.
+void blitCenteredKeyed(int s, int dx, int dy, uint16_t bg) {
+  const SpriteDef &d = CARL_SPRITES[s];
+  int ox = (480 - d.w) / 2 + dx, oy = (480 - d.h) / 2 + dy;
+  for (int i = 0; i < 480 * 480; i++) rotBuf[i] = bg;
+  for (int y = 0; y < d.h; y++) {
+    int py = oy + y;
+    if (py < 0 || py >= 480) continue;
+    const uint16_t *row = &sprBuf[s][y * d.w];
+    uint16_t *dst = &rotBuf[py * 480 + ox];
+    for (int x = 0; x < d.w; x++) {
+      int px = ox + x;
+      if (px < 0 || px >= 480) continue;
+      uint16_t v = row[x];
+      if (v != C_BG) dst[x] = v;   // keep Carl; leave bg showing elsewhere
+    }
+  }
+  gfx->draw16bitRGBBitmap(0, 0, rotBuf, 480, 480);
 }
 
 // Rotozoom a sprite about screen center by `ang`, into rotBuf, then blit. Pixels
@@ -201,6 +226,12 @@ void setup() {
   C_POOP_SH = gfx->color565(94, 60, 36);
   C_PWHITE  = gfx->color565(250, 250, 250);
   C_PDARK   = gfx->color565(30, 24, 20);
+  FLASH[0]  = gfx->color565(230, 60, 60);    // red
+  FLASH[1]  = gfx->color565(240, 150, 40);   // orange
+  FLASH[2]  = gfx->color565(240, 220, 60);   // yellow
+  FLASH[3]  = gfx->color565(70, 200, 90);    // green
+  FLASH[4]  = gfx->color565(70, 160, 235);   // blue
+  FLASH[5]  = gfx->color565(180, 90, 220);   // purple
 
   gfx->fillScreen(C_BG);
   gfx->flush();
@@ -267,7 +298,7 @@ void loop() {
       }
       break;
     case DIZZY:
-      if (now >= modeUntil) { mode = THINKING; phaseStart = now; modeUntil = now + rdur(); }
+      if (now >= modeUntil) { mode = THINKING; phaseStart = now; modeUntil = now + rdur() + 2000; }
       break;
     case THINKING:
       if (now >= modeUntil) {
@@ -300,7 +331,8 @@ void loop() {
     }
 
     case THINKING: {
-      blitCentered(SP_THINKING, 0, breath);
+      uint16_t fc = FLASH[(ph / 150) % FLASH_N];   // drumroll: swap bg every 150ms
+      blitCenteredKeyed(SP_THINKING, 0, breath, fc);
       int total = modeUntil - phaseStart;
       int dots = 1 + (total > 0 ? (int)(3.0f * ph / total) : 0);
       if (dots > 3) dots = 3;
